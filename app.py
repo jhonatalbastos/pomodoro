@@ -7,34 +7,34 @@ from datetime import datetime, timedelta
 from groq import Groq
 import streamlit.components.v1 as components
 
-# --- CONFIGURAÇÕES DO STREAMLIT ---
-st.set_page_config(page_title="AI Pomodoro + MS To Do", layout="wide", page_icon="🍅")
+# --- CONFIGURAÇÕES DA PÁGINA ---
+st.set_page_config(page_title="AI Pomodoro Expert", layout="wide", page_icon="🍅")
 
-# Inicialização do Cliente Groq via Secrets
+# Inicialização Groq
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception as e:
-    st.error("Erro ao configurar API do Groq. Verifique as 'Secrets' no Streamlit Cloud.")
+    st.error("Erro: Verifique a GROQ_API_KEY nos Secrets do Streamlit.")
 
-# --- BANCO DE DADOS LOCAL (Persistência Complementar) ---
+# --- BANCO DE DADOS (SQLite) ---
 def init_db():
-    conn = sqlite3.connect('pomodoro_analytics.db')
+    conn = sqlite3.connect('pomodoro_v4.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS logs 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   data TEXT, planejado TEXT, realizado TEXT, 
-                  interrupcoes TEXT, duracao INTEGER)''')
+                  interrupcoes TEXT, duracao INTEGER, categoria TEXT)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- FUNÇÃO DE NOTIFICAÇÃO DO BROWSER ---
+# --- NOTIFICAÇÃO E SOM ---
 def notify_browser(title, message):
     js_code = f"""
     <script>
     if (Notification.permission === "granted") {{
-        new Notification("{title}", {{ body: "{message}", icon: "https://cdn-icons-png.flaticon.com/512/2596/2596542.png" }});
+        new Notification("{title}", {{ body: "{message}" }});
         var audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
         audio.play();
     }}
@@ -45,37 +45,37 @@ def notify_browser(title, message):
 # --- ESTADO DA SESSÃO ---
 if 'end_time' not in st.session_state: st.session_state.end_time = None
 if 'timer_active' not in st.session_state: st.session_state.timer_active = False
-if 'last_task' not in st.session_state: st.session_state.last_task = ""
+
+# --- SIDEBAR (Configurações) ---
+st.sidebar.title("⚙️ Configurações")
+# A URL gerada no Power Automate Web (no bloco HTTP) deve ser colada aqui:
+webhook_url = st.sidebar.text_input("URL Power Automate (HTTP POST URL):", type="password")
+st.sidebar.info("Ao salvar, a tarefa será enviada para o Microsoft To Do via Power Automate V3.")
 
 # --- INTERFACE PRINCIPAL ---
-st.title("🍅 AI Pomodoro & MS To Do Sync")
-
-# Solicitar permissão de notificação
+st.title("🍅 AI Pomodoro Analyzer")
 components.html("<script>if(Notification.permission!=='granted') Notification.requestPermission();</script>", height=0)
 
-col1, col2 = st.columns([1, 1])
+col1, col2 = st.columns([1.2, 1])
 
 with col1:
-    st.header("⏱️ Timer de Foco")
+    st.subheader("🚀 Sessão Atual")
     
-    # Configuração do Webhook (Pode ser colocado nas Secrets também)
-    webhook_url = st.text_input("Webhook URL do Make.com:", type="password", help="Cole aqui o link gerado no Passo 1 do tutorial.")
+    tarefa_nome = st.text_input("O que você vai focar agora?", placeholder="Ex: Relatório de Vendas")
+    categoria = st.selectbox("Categoria:", ["Trabalho", "Estudo", "Pessoal", "Saúde"])
     
-    tarefa_atual = st.text_input("Tarefa ativa (Microsoft To Do):", value=st.session_state.last_task, placeholder="Ex: Analisar balanço trimestral")
-    st.session_state.last_task = tarefa_atual
-
-    tempo_min = st.select_slider("Tempo da sessão (minutos):", options=[5, 10, 15, 25, 45, 50, 60], value=25)
+    tempo_foco = st.select_slider("Duração (minutos):", options=[1, 5, 10, 25, 45, 50, 60], value=25)
     
     c1, c2 = st.columns(2)
-    if c1.button("🚀 Iniciar Pomodoro", use_container_width=True, disabled=st.session_state.timer_active):
-        if tarefa_atual:
-            st.session_state.end_time = datetime.now() + timedelta(minutes=tempo_min)
+    if c1.button("▶️ Iniciar Foco", use_container_width=True, disabled=st.session_state.timer_active):
+        if tarefa_nome:
+            st.session_state.end_time = datetime.now() + timedelta(minutes=tempo_foco)
             st.session_state.timer_active = True
             st.rerun()
         else:
-            st.warning("⚠️ Informe qual tarefa está a realizar.")
+            st.warning("⚠️ Dê um nome à tarefa antes de iniciar!")
 
-    if c2.button("⏹️ Parar/Resetar", use_container_width=True):
+    if c2.button("⏹️ Resetar", use_container_width=True):
         st.session_state.timer_active = False
         st.session_state.end_time = None
         st.rerun()
@@ -90,86 +90,90 @@ with col1:
             st.rerun()
         else:
             st.session_state.timer_active = False
-            notify_browser("Pomodoro Finalizado!", f"Tarefa: {tarefa_atual}")
+            notify_browser("Pomodoro Finalizado!", f"Tarefa: {tarefa_nome}")
             st.balloons()
-            st.success("✅ Sessão terminada! Descreva o que aconteceu abaixo.")
+            st.success("🎉 Sessão Concluída!")
 
     st.divider()
     
-    # --- REGISTRO DE DADOS ---
-    st.subheader("📝 Registro de Atividade")
-    with st.form("log_session", clear_on_submit=True):
-        detalhes = st.text_area("O que realizou nesta sessão?")
-        interrupcoes = st.text_input("Interrupções ou obstáculos?")
-        sync_btn = st.form_submit_button("💾 Salvar e Sincronizar com MS To Do")
+    # --- FORMULÁRIO DE REGISTRO ---
+    with st.form("registro_ia", clear_on_submit=True):
+        st.write("### 📝 O que aconteceu?")
+        notas_realizado = st.text_area("Descreva o que foi feito:")
+        interrupcoes = st.text_input("Houve interrupções? Quem/O quê?")
         
-        if sync_btn:
-            # 1. Salvar localmente (SQLite)
-            conn = sqlite3.connect('pomodoro_analytics.db')
-            conn.execute("INSERT INTO logs (data, planejado, realizado, interrupcoes, duracao) VALUES (?,?,?,?,?)",
-                         (datetime.now().strftime("%Y-%m-%d %H:%M"), tarefa_atual, detalhes, interrupcoes, tempo_min))
+        if st.form_submit_button("✅ Salvar e Sincronizar"):
+            # Salvar no SQLite Local
+            conn = sqlite3.connect('pomodoro_v4.db')
+            conn.execute("INSERT INTO logs (data, planejado, realizado, interrupcoes, duracao, categoria) VALUES (?,?,?,?,?,?)",
+                         (datetime.now().strftime("%Y-%m-%d %H:%M"), tarefa_nome, notas_realizado, interrupcoes, tempo_foco, categoria))
             conn.commit()
             conn.close()
             
-            # 2. Enviar para o Make.com (Microsoft To Do)
+            # Enviar para Power Automate
             if webhook_url:
                 payload = {
-                    "tarefa": tarefa_atual,
-                    "notas": detalhes,
-                    "interrupcoes": interrupcoes,
-                    "duracao": tempo_min,
-                    "timestamp": datetime.now().isoformat()
+                    "tarefa": tarefa_nome, 
+                    "notas": notas_realizado, 
+                    "interrupcoes": interrupcoes, 
+                    "minutos": int(tempo_foco)
                 }
                 try:
-                    res = requests.post(webhook_url, json=payload)
-                    if res.status_code == 200:
-                        st.success("✨ Sincronizado com Microsoft To Do!")
+                    r = requests.post(webhook_url, json=payload, timeout=10)
+                    if r.status_code in [200, 202]:
+                        st.success("🚀 Sincronizado com Microsoft To Do!")
                     else:
-                        st.error("Erro na comunicação com o Make.")
-                except:
-                    st.error("Falha ao conectar ao Webhook.")
+                        st.error(f"Erro no Power Automate (V3): {r.status_code}")
+                except Exception as e:
+                    st.error(f"Falha ao sincronizar: {e}")
             else:
-                st.info("Log guardado localmente (Webhook não configurado).")
+                st.info("Log salvo apenas localmente. Configure a URL na barra lateral para sincronizar.")
 
 with col2:
-    st.header("🤖 Análise da IA Groq")
+    st.subheader("🤖 IA Mentor & Insights")
     
-    tab_chat, tab_report = st.tabs(["💬 Mentor IA", "📊 Relatório de Desempenho"])
+    tab_chat, tab_stats = st.tabs(["💬 Chat com IA", "📊 Estatísticas"])
     
     with tab_chat:
-        user_msg = st.chat_input("Peça dicas ou análises sobre o seu dia...")
-        if user_msg:
-            with st.spinner("IA a pensar..."):
-                conn = sqlite3.connect('pomodoro_analytics.db')
-                dados_recentes = pd.read_sql_query("SELECT * FROM logs ORDER BY id DESC LIMIT 5", conn).to_string()
-                conn.close()
-                
-                resp = client.chat.completions.create(
+        # Recuperar últimos logs para contexto da IA
+        conn = sqlite3.connect('pomodoro_v4.db')
+        df_ctx = pd.read_sql_query("SELECT * FROM logs ORDER BY id DESC LIMIT 5", conn)
+        conn.close()
+        
+        user_input = st.chat_input("Peça dicas ou análises sobre seu desempenho...")
+        if user_input:
+            contexto = df_ctx.to_string()
+            with st.spinner("IA analisando seu progresso..."):
+                response = client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": f"És um mentor de produtividade. Histórico recente: {dados_recentes}"},
-                        {"role": "user", "content": user_msg}
+                        {"role": "system", "content": f"Você é um mentor de produtividade experiente. Analise o histórico e ajude o usuário. Histórico recente: {contexto}"},
+                        {"role": "user", "content": user_input}
                     ],
                     model="llama-3.3-70b-versatile"
                 )
-                st.write(resp.choices[0].message.content)
+                st.info(response.choices[0].message.content)
 
-    with tab_report:
-        if st.button("📈 Gerar Relatório Estratégico"):
-            conn = sqlite3.connect('pomodoro_analytics.db')
-            df_full = pd.read_sql_query("SELECT * FROM logs", conn)
-            conn.close()
+    with tab_stats:
+        conn = sqlite3.connect('pomodoro_v4.db')
+        df_stats = pd.read_sql_query("SELECT * FROM logs", conn)
+        conn.close()
+        
+        if not df_stats.empty:
+            st.write("Distribuição por Categoria")
+            st.bar_chart(df_stats['categoria'].value_counts())
             
-            if not df_full.empty:
-                with st.spinner("Analisando padrões..."):
-                    prompt = f"Analise estes dados de pomodoro e dê um feedback sobre foco e interrupções: {df_full.to_string()}"
+            if st.button("📈 Gerar Relatório Profundo"):
+                with st.spinner("IA analisando tendências..."):
+                    prompt = f"Analise meus padrões de trabalho, categorias e interrupções: {df_stats.to_string()}"
                     relatorio = client.chat.completions.create(
                         messages=[{"role": "user", "content": prompt}],
                         model="llama-3.3-70b-versatile"
                     ).choices[0].message.content
+                    st.markdown("### 📊 Relatório Estratégico")
                     st.markdown(relatorio)
-                    st.dataframe(df_full)
-            else:
-                st.warning("Ainda não existem dados para análise.")
+        else:
+            st.info("Complete sessões para ver suas estatísticas.")
 
+# --- RODAPÉ ---
 st.sidebar.markdown("---")
-st.sidebar.caption("v1.0 - Sincronização MS To Do via Make.com")
+st.sidebar.caption("AI Pomodoro v4.1 (Power Automate V3 Edition)")
